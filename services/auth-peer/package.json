@@ -1,0 +1,7 @@
+{
+  "name": "human-made-live-auth-peer",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node src/AuthPeer.mjs" },
+  "dependencies": { "google-auth-library": "10.4.0", "peerjs": "1.5.5" }
+}

@@ -23,6 +23,8 @@ export class StudioMeshClient {
   private peer?: Peer;
   private directoryConnections: DataConnection[] = [];
   private callbacks: MeshCallbacks;
+  private activeRoom?: RoomAdvertisement;
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
 
   constructor(callbacks: MeshCallbacks = {}) {
     this.callbacks = callbacks;
@@ -50,7 +52,20 @@ export class StudioMeshClient {
       peerId: this.peer.id,
       updatedAt: Date.now(),
     };
+    this.activeRoom = advertisement;
     this.sendToDirectories({ type: "room:announce", room: advertisement });
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => {
+        if (this.activeRoom) this.sendToDirectories({ type: "room:heartbeat", room: this.activeRoom });
+      }, 15000);
+    }
+  }
+
+  withdrawRoom() {
+    if (this.activeRoom) this.sendToDirectories({ type: "room:withdraw", roomId: this.activeRoom.roomId });
+    this.activeRoom = undefined;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
   }
 
   requestRooms() {
@@ -58,6 +73,7 @@ export class StudioMeshClient {
   }
 
   close() {
+    this.withdrawRoom();
     this.directoryConnections.forEach((connection) => connection.close());
     this.peer?.destroy();
   }

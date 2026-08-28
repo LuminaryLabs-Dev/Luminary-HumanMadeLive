@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DataConnection } from "peerjs";
+import { StudioIdentityModal } from "../components/StudioIdentityModal";
+import { loadGuestSession, publicStudioRecord, saveGuestSession, type GuestSession } from "../lib/guest-session";
+import { PeerDbClient } from "../lib/peerdb-client";
 import { StudioMeshClient } from "../lib/studio-mesh";
 
 type Artist = {
@@ -88,11 +91,33 @@ export default function HomePage() {
   const [notice, setNotice] = useState("Discovery mesh is online");
   const [peerId, setPeerId] = useState<string | null>(null);
   const [pendingConnection, setPendingConnection] = useState<DataConnection | null>(null);
+  const [session, setSession] = useState<GuestSession | null>(null);
+  const [identityModalOpen, setIdentityModalOpen] = useState(false);
   const meshRef = useRef<StudioMeshClient | null>(null);
+  const peerDbRef = useRef<PeerDbClient | null>(null);
+
+  useEffect(() => {
+    const loaded = loadGuestSession();
+    setSession(loaded);
+    if (!loaded.displayName) setIdentityModalOpen(true);
+
+    const peerDb = new PeerDbClient({ onStatus: setNotice });
+    peerDbRef.current = peerDb;
+    peerDb.start();
+    peerDb.requestRecords();
+
+    return () => {
+      peerDb.close();
+      peerDbRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const mesh = new StudioMeshClient({
-      onPeerId: setPeerId,
+      onPeerId: (nextPeerId) => {
+        setPeerId(nextPeerId);
+        setSession((current) => current ? saveGuestSession({ ...current, peerId: nextPeerId }) : current);
+      },
       onStatus: setNotice,
       onConnection: (connection) => {
         setPendingConnection(connection);
@@ -127,19 +152,37 @@ export default function HomePage() {
   }
 
   function toggleStudio() {
-    setIsStudioOpen((open) => !open);
-    setNotice(isStudioOpen ? "Your studio is now hidden" : "Your studio is visible to live visitors");
-    if (!isStudioOpen) {
+    if (!session?.displayName) {
+      setIdentityModalOpen(true);
+      return;
+    }
+    const nextOpen = !isStudioOpen;
+    setIsStudioOpen(nextOpen);
+    setNotice(nextOpen ? `${session.displayName} is live to visitors` : "Your studio is now hidden");
+    peerDbRef.current?.upsert(publicStudioRecord(session, nextOpen));
+    if (nextOpen) {
       meshRef.current?.announceRoom({
-        roomId: `studio-${peerId || "local"}`,
-        name: "Crimson Wheeler",
+        roomId: session.studioId,
+        name: session.displayName,
         role: "Creative technologist",
         specialties: ["Games", "Tech art", "Web experiences"],
         price: "by conversation",
         status: "available",
       });
+    } else {
+      meshRef.current?.withdrawRoom();
     }
   }
+
+  function handleSessionSaved(nextSession: GuestSession) {
+    const saved = saveGuestSession(nextSession);
+    setSession(saved);
+    peerDbRef.current?.upsert(publicStudioRecord(saved, isStudioOpen));
+  }
+
+  const profileInitials = session?.displayName
+    ? session.displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase()
+    : "CW";
 
   return (
     <main className="site-shell">
@@ -153,7 +196,7 @@ export default function HomePage() {
           <a href="#how-it-works">How it works</a>
           <button className="text-button" onClick={toggleStudio}>{isStudioOpen ? "Close studio" : "Open your studio"}</button>
         </nav>
-        <button className="profile-button" onClick={toggleStudio} aria-label="Open studio profile">CW</button>
+        <button className="profile-button" onClick={() => session?.displayName ? setIdentityModalOpen(true) : toggleStudio()} aria-label="Open studio profile">{profileInitials}{session?.googleSub && <span className="profile-star">★</span>}</button>
       </header>
 
       <section className="hero" id="top">
@@ -221,6 +264,7 @@ export default function HomePage() {
 
       <footer className="footer"><div className="footer-mark">✳</div><div><strong>Human-Made Live</strong><span>Real people. Real work. Live.</span></div><span className="footer-peer">Peer-first creative network · {peerId ? "connected" : "connecting"}</span></footer>
 
+      {session && identityModalOpen && <StudioIdentityModal session={session} onClose={() => setIdentityModalOpen(false)} onSaved={handleSessionSaved} onStatus={setNotice} />}
       {selectedArtist && <div className="modal-backdrop" role="presentation" onClick={() => setSelectedArtist(null)}><section className="commission-modal" role="dialog" aria-modal="true" aria-labelledby="commission-title" onClick={(event) => event.stopPropagation()}><button className="close-button" onClick={() => setSelectedArtist(null)} aria-label="Close">×</button><div className="modal-kicker"><span className="live-dot" /> PRIVATE COMMISSION ROOM</div><h2 id="commission-title">Connect with {selectedArtist.name}</h2><p>{selectedArtist.response}. Tell them what you are making and they can decide whether it is a fit.</p><label>Your project brief<textarea placeholder="What would you like this artist to make?" /></label><div className="modal-actions"><button className="secondary-button" onClick={() => setSelectedArtist(null)}>Keep browsing</button><button className="primary-button" onClick={() => { setSelectedArtist(null); setNotice(`Request sent to ${selectedArtist.name}`); }}>Send request <span>↗</span></button></div><small>PeerJS room handshake will begin after the artist accepts.</small></section></div>}
     </main>
   );

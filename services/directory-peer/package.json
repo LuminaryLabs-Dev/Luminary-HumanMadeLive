@@ -4,5 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "peerjs": "1.5.5"
   }
 }
